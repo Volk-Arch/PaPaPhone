@@ -208,3 +208,6 @@ __marimo__/
 
 # Marimo
 models/
+
+# PaPaPhone runtime data
+data/papaphone.db

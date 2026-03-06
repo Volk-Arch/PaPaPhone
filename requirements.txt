@@ -1,0 +1,5 @@
+vosk>=0.3.45
+pyttsx3>=2.90
+pyserial>=3.5
+sounddevice>=0.4.6
+PyYAML>=6.0
