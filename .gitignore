@@ -15,10 +15,11 @@ data/papaphone.db
 # Логи
 *.log
 
-# IDE
+# IDE и инструменты
 .idea/
 .vscode/
 .cursor/
+.claude/
 
 # Сборка/пакетирование
 *.egg-info/
