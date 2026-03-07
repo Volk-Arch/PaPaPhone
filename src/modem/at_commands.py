@@ -1,3 +1,6 @@
+# Copyright (c) 2024 Igor Kriusov <kriusovia@gmail.com>
+# SPDX-License-Identifier: LicenseRef-PolyForm-Noncommercial-1.0.0
+# https://polyformproject.org/licenses/noncommercial/1.0.0/
 """
 Базовые AT-команды SIM7600: проверка связи, сеть, уровень сигнала.
 """
@@ -82,14 +85,20 @@ def get_attach_gprs(serial_io: ModemSerial) -> Optional[int]:
 
 def init_modem(serial_io: ModemSerial) -> bool:
     """
-    Базовая инициализация: проверить AT, при необходимости сбросить echo.
+    Инициализация модема: проверить связь, настроить аудио и звонки.
     Возвращает True, если модуль отвечает.
     """
     try:
         if not check_at(serial_io):
             return False
-        # Выключить echo команд (ATE0), чтобы ответы были предсказуемыми
+        # Выключить echo — ответы предсказуемы
         serial_io.send_at("ATE0")
+        # Включить определитель номера (CLIP) — нужен для IncomingCallScenario
+        serial_io.send_at("AT+CLIP=1")
+        # Максимальная громкость звонка (0–5)
+        serial_io.send_at("AT+CRSL=5")
+        # Максимальная громкость динамика во время разговора (0–5)
+        serial_io.send_at("AT+CLVL=5")
         return True
     except SerialIOError:
         return False

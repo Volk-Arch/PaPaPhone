@@ -1,7 +1,11 @@
+# Copyright (c) 2024 Igor Kriusov <kriusovia@gmail.com>
+# SPDX-License-Identifier: LicenseRef-PolyForm-Noncommercial-1.0.0
+# https://polyformproject.org/licenses/noncommercial/1.0.0/
 """
 SQLite-хранилище контактов: создание схемы, CRUD, поиск по имени и алиасам.
 """
 import json
+import re
 import sqlite3
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -97,6 +101,31 @@ def get_phone_by_name(name_or_alias: str) -> Optional[str]:
     """
     found = find_by_name_or_alias(name_or_alias)
     return found[0][2] if found else None
+
+
+def find_by_phone(number: str) -> Optional[Tuple[int, str, str]]:
+    """
+    Найти контакт по номеру телефона (первое совпадение).
+    Сравнение по последним 7 цифрам — не зависит от формата кода страны.
+    Возвращает (id, name, phone) или None.
+    """
+    if not number:
+        return None
+    digits = re.sub(r"\D", "", number)
+    tail = digits[-7:] if len(digits) >= 7 else digits
+    if not tail:
+        return None
+    init_db()
+    conn = _get_connection()
+    try:
+        cur = conn.execute("SELECT id, name, phone FROM contacts")
+        for row in cur:
+            row_digits = re.sub(r"\D", "", row["phone"] or "")
+            if row_digits.endswith(tail):
+                return (row["id"], row["name"], row["phone"])
+        return None
+    finally:
+        conn.close()
 
 
 def list_all_contacts() -> List[Tuple[int, str, str]]:

@@ -1,3 +1,6 @@
+# Copyright (c) 2024 Igor Kriusov <kriusovia@gmail.com>
+# SPDX-License-Identifier: LicenseRef-PolyForm-Noncommercial-1.0.0
+# https://polyformproject.org/licenses/noncommercial/1.0.0/
 """
 Управление звонками через SIM7600: исходящие, входящие, сброс.
 """
@@ -64,6 +67,33 @@ def parse_ring_line(line: str) -> Optional[str]:
         match = re.search(r'\+CLIP:\s*"([^"]*)"', line)
         if match:
             return match.group(1).strip()
+    return None
+
+
+def get_incoming_caller(serial_io: ModemSerial) -> Optional[str]:
+    """
+    AT+CLCC — проверить, есть ли входящий звонок (dir=1/MT, status=4/ringing).
+    Возвращает номер звонящего, '' если номер не определён, None если звонка нет.
+    Формат: +CLCC: idx,dir,status,mode,mpty[,number,type[,alpha]]
+    """
+    try:
+        resp = serial_io.send_at("AT+CLCC")
+        for line in resp.splitlines():
+            line = line.strip()
+            if not line.startswith("+CLCC:"):
+                continue
+            parts = [p.strip().strip('"') for p in line.split(":", 1)[1].split(",")]
+            if len(parts) < 3:
+                continue
+            try:
+                direction = int(parts[1])
+                status = int(parts[2])
+            except ValueError:
+                continue
+            if direction == 1 and status == 4:  # MT incoming ringing
+                return parts[5] if len(parts) > 5 else ""
+    except Exception:
+        pass
     return None
 
 

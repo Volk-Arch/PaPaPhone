@@ -1,119 +1,168 @@
 # PaPaPhone
 
-Голосовой телефон на Orange Pi Zero 2W + SIM7600G-H 4G HAT (Waveshare). Управление голосом: звонки по контактам, набор номера, SMS, контакты, время, уровень сигнала.
+Голосовой телефон на Orange Pi + SIM7600 4G HAT. Управление только голосом — для людей, которым сложно пользоваться смартфоном.
+
+## Возможности
+
+- 📞 Звонки по имени из книги контактов или по номеру
+- 📲 Ответ и сброс входящих звонков голосом
+- 💬 Чтение SMS по одному с паузами
+- 👤 Добавление контактов голосом
+- 🕐 Время, уровень сигнала, список контактов
+- 🔔 Автообнаружение входящих звонков (AT+CLCC)
+
+Все действия детерминированы: каждый сценарий — чёткий диалог с подтверждением. Молчание или непонимание → отмена (безопасный дефолт).
 
 ## Технологии
 
-- **Python 3** — основное приложение
-- **Vosk** — офлайн распознавание речи
-- **SQLite** — хранение контактов (имя, номер, алиасы для голоса)
-- **pyttsx3 + eSpeak** — офлайн озвучка ответов
-- **pyserial** — работа с модулем SIM7600 по AT-командам
-- **Словарь команд** — YAML (`data/commands.yaml`)
+| Компонент | Технология |
+|---|---|
+| Распознавание речи | [Vosk](https://alphacephei.com/vosk/) (офлайн) |
+| Синтез речи | [Piper TTS](https://github.com/rhasspy/piper) (офлайн, нейросеть) |
+| Модем | SIM7600 по AT-командам (pyserial) |
+| Контакты | SQLite |
+| Команды | YAML-словарь + fuzzy match |
 
-## Требования
+## Оборудование
 
-- Orange Pi Zero 2W (или ПК для разработки)
+- Orange Pi Zero 2W (или любой Linux ARM/x86)
 - SIM7600G-H 4G HAT, подключённый по UART/USB
-- Микрофон (USB или совместимый с ALSA)
-- Динамик/наушники для TTS
-
-### Системные пакеты (Debian/Orange Pi)
-
-```bash
-sudo apt install espeak ffmpeg libportaudio2 portaudio19-dev
-```
+- USB-микрофон (или совместимый с ALSA)
+- Динамик (USB-аудио или 3.5 мм)
 
 ## Установка
 
 ```bash
-cd PaPaPhone
-python -m venv .venv
-.venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+bash deploy.sh
 ```
 
-### Модель Vosk
+Скрипт сам установит системные пакеты, создаст venv, скачает модели Vosk и Piper, создаст systemd-сервис.
 
-Скачайте малую модель для русского или английского и распакуйте в папку `models/`:
-
-- Русская: [vosk-model-small-ru-0.22](https://alphacephei.com/vosk/models)
-- Английская: [vosk-model-small-en-us-0.15](https://alphacephei.com/vosk/models)
-
-Имя папки должно совпадать с конфигом (по умолчанию `vosk-model-small-ru-0.22`). Можно задать через переменную окружения:
+### Ручная установка
 
 ```bash
-export PAPAPHONE_VOSK_MODEL=vosk-model-small-en-us-0.15
+# Системные зависимости
+sudo apt install python3 python3-venv portaudio19-dev
+
+# Виртуальное окружение
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+# Модель Vosk (русская, ~50 МБ)
+mkdir -p models
+wget https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip
+unzip vosk-model-small-ru-0.22.zip -d models/
+
+# Модель Piper (русская, ~60 МБ)
+BASE=https://huggingface.co/rhasspy/piper-voices/resolve/main/ru/ru_RU/ruslan/medium
+wget -P models/ $BASE/ru_RU-ruslan-medium.onnx
+wget -P models/ $BASE/ru_RU-ruslan-medium.onnx.json
 ```
-
-## Конфигурация
-
-В [src/config.py](src/config.py) или через переменные окружения:
-
-- `PAPAPHONE_MODEM_PORT` — порт модуля (на Orange Pi: `/dev/ttyUSB0` или `/dev/ttyS1`, смотреть `dmesg | grep tty`)
-- `PAPAPHONE_VOSK_MODEL` — имя папки модели в `models/`
-- `PAPAPHONE_WAKE_PHRASES` — команды-активаторы через запятую (по умолчанию `телефон,папафон`)
-- `PAPAPHONE_AUDIO_INPUT_DEVICE` / `PAPAPHONE_AUDIO_OUTPUT_DEVICE` — индекс устройства ALSA при необходимости
 
 ## Запуск
 
-Из корня проекта:
+```bash
+# Обычный запуск
+python -m src.main
+
+# Без wake-фразы (сразу слушает команды)
+python -m src.main --no-wake
+
+# Демо-режим — без модема и TTS, вывод в консоль (тест на ПК)
+python -m src.main --demo
+
+# Без модема (только контакты, время, помощь — TTS работает)
+python -m src.main --no-modem
+```
+
+### Управление сервисом (после deploy.sh)
 
 ```bash
-python -m src.main
+sudo systemctl start papaphone
+sudo systemctl stop papaphone
+journalctl -u papaphone -f   # логи в реальном времени
 ```
 
-Опции:
+## Голосовые команды
 
-- `--no-modem` — не подключаться к модему (удобно для локального теста: контакты, время, помощь, плюс в консоль выводится «Распознано: …»)
-- `--no-asr` — не загружать Vosk (если нет микрофона)
-- `--listen-timeout 12` — таймаут ожидания фразы в секундах
-- `--test-asr` — только проверка Vosk: без модема и TTS, распознанный текст выводится в консоль (для отладки распознавания)
-- `--test-asr-say` — вместе с `--test-asr`: после каждой фразы озвучивать ответ («Вы сказали: …» или «Не расслышала»), чтобы проверить и TTS
-- `--demo` — **демо-режим**: без модема, с имитацией звонков/SMS/сигнала; полный цикл (Vosk → команды → TTS) для проверки на ПК
-- `--no-wake` — не требовать команду «телефон» перед основными командами (всегда сразу слушать команды)
+После wake-фразы **«телефон»** скажите:
 
-По умолчанию приложение ждёт **команду-активатор** («телефон» или «папафон»), затем говорит «Слушаю» и принимает основную команду (позвони, контакты, который час и т.д.). С флагом `--no-wake` можно сразу говорить команды без активатора.
+| Команда | Что происходит |
+|---|---|
+| «позвони маме» | Ищет контакт → подтверждение → звонит |
+| «набери 9 1 6 1 2 3 4 5 6 7» | Подтверждение → набирает номер |
+| «положи трубку» | Завершает звонок |
+| «ответь» | Отвечает на входящий |
+| «прочитай смс» | Читает сообщения по одному |
+| «добавь контакт» | 3 шага: имя → номер → подтверждение |
+| «список контактов» | Называет все имена |
+| «который час» | Говорит время |
+| «уровень сигнала» | Говорит качество сети |
+| «помощь» | Перечисляет команды |
 
-После старта приложение говорит «Готов к командам» (или «Демо-режим. Готов к командам» при `--demo`) и ждёт голосовые команды. Скажите, например: «Позвони Ивану», «Список контактов», «Который час», «Помощь».
+**Входящий звонок**: система сама обнаруживает через AT+CLCC каждые 3 секунды, объявляет кто звонит, спрашивает «Ответить?». При молчании — сброс.
 
-### Если TTS не озвучивает
+## Конфигурация
 
-- **Windows**: нужны голоса SAPI (обычно уже есть). Если пишет про драйвер — установите [eSpeak для Windows](https://github.com/rhasspy/espeak-ng/releases) и перезапустите.
-- **Linux**: установите `espeak`: `sudo apt install espeak ffmpeg`.
-- При ошибке инициализации движка фразы выводятся в консоль с префиксом `[TTS]` — так можно проверить логику без звука.
+Через переменные окружения (или `src/config.py`):
 
-## Добавление контактов
+| Переменная | По умолчанию | Описание |
+|---|---|---|
+| `PAPAPHONE_MODEM_PORT` | `/dev/ttyUSB0` | Порт SIM7600 |
+| `PAPAPHONE_VOSK_MODEL` | `vosk-model-small-ru-0.22` | Папка модели Vosk в `models/` |
+| `PAPAPHONE_PIPER_MODEL` | `models/ru_RU-ruslan-medium.onnx` | Путь к модели Piper |
+| `PAPAPHONE_PIPER_SAMPLE_RATE` | `22050` | Частота дискретизации Piper |
+| `PAPAPHONE_AUDIO_INPUT_DEVICE` | (системный) | Индекс ALSA-устройства записи |
+| `PAPAPHONE_AUDIO_OUTPUT_DEVICE` | (системный) | Индекс ALSA-устройства воспроизведения |
+| `PAPAPHONE_WAKE_PHRASES` | `телефон,папафон` | Wake-фразы через запятую |
 
-База SQLite в `data/papaphone.db`. Контакты можно добавлять программно:
-
-```python
-from src.contacts import db
-db.init_db()
-db.add_contact("Иван Петров", "+79001234567", aliases=["Иван", "Ваня"])
-```
-
-Или через свой скрипт/админку, используя `contacts.db`: `add_contact`, `find_by_name_or_alias`, `list_all_contacts`.
+Доступные ALSA-устройства: `aplay -l` (воспроизведение), `arecord -l` (запись).
 
 ## Структура проекта
 
 ```
 PaPaPhone/
 ├── src/
-│   ├── main.py           # Точка входа
-│   ├── config.py         # Конфигурация
-│   ├── voice/            # Vosk (asr) + pyttsx3 (tts)
-│   ├── modem/            # SIM7600: serial_io, at_commands, call, sms
-│   ├── contacts/        # SQLite контакты
-│   └── commands/        # Словарь команд (YAML) и исполнитель
+│   ├── main.py              # Точка входа, главный цикл
+│   ├── config.py            # Конфигурация через env
+│   ├── voice/
+│   │   ├── asr.py           # Vosk: распознавание речи
+│   │   └── tts.py           # Piper: синтез речи
+│   ├── modem/
+│   │   ├── serial_io.py     # UART / AT-команды
+│   │   ├── at_commands.py   # Инициализация, сигнал
+│   │   ├── call.py          # Звонки, определитель номера
+│   │   └── sms.py           # Чтение SMS
+│   ├── contacts/
+│   │   ├── db.py            # SQLite CRUD + поиск по имени/номеру
+│   │   └── schema.sql
+│   ├── commands/
+│   │   ├── dictionary.py    # Загрузка YAML-словаря
+│   │   └── executor.py      # match_command() → MatchedCommand
+│   └── scenarios/
+│       ├── base.py          # ScenarioContext, BaseScenario, _confirm()
+│       ├── call.py          # Звонки + ожидание конца разговора
+│       ├── info.py          # Время, помощь, контакты, сигнал
+│       ├── sms.py           # Чтение SMS по одному
+│       ├── contacts.py      # Добавление контакта голосом
+│       └── __init__.py      # get_scenario(text) — роутер
 ├── data/
-│   ├── commands.yaml    # Фразы и действия
-│   └── papaphone.db     # База контактов (создаётся при первом запуске)
-├── models/              # Сюда положить модель Vosk (в .gitignore)
+│   ├── commands.yaml        # Фразы и действия
+│   └── papaphone.db         # База контактов (создаётся автоматически)
+├── models/                  # Модели Vosk и Piper (.gitignore)
 ├── requirements.txt
+├── deploy.sh                # Установка на Orange Pi
 └── README.md
 ```
 
+## Автор
+
+**Igor Kriusov** — [kriusovia@gmail.com](mailto:kriusovia@gmail.com)
+GitHub: [https://github.com/Volk-Arch/PaPaPhone](https://github.com/Volk-Arch/PaPaPhone)
+
 ## Лицензия
 
-Проект в репозитории — по вашему выбору. Vosk, pyttsx3, eSpeak и др. — по их лицензиям.
+Код проекта: **[PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/)** — бесплатно для личного и некоммерческого использования.
+
+Зависимости: Vosk (Apache 2.0), Piper TTS (MIT), остальные — см. их репозитории.

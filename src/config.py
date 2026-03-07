@@ -1,3 +1,6 @@
+# Copyright (c) 2024 Igor Kriusov <kriusovia@gmail.com>
+# SPDX-License-Identifier: LicenseRef-PolyForm-Noncommercial-1.0.0
+# https://polyformproject.org/licenses/noncommercial/1.0.0/
 """
 Конфигурация PaPaPhone.
 Пути и параметры задаются здесь или через переменные окружения.
@@ -28,6 +31,17 @@ COMMANDS_YAML_PATH = DATA_DIR / "commands.yaml"
 # На Orange Pi задать индекс ALSA при необходимости, например 1 для USB-микрофона
 AUDIO_INPUT_DEVICE = os.environ.get("PAPAPHONE_AUDIO_INPUT_DEVICE")
 AUDIO_OUTPUT_DEVICE = os.environ.get("PAPAPHONE_AUDIO_OUTPUT_DEVICE")
+
+# Piper TTS: путь к .onnx модели и частота дискретизации
+# Скачать модель: https://huggingface.co/rhasspy/piper-voices/
+# Пример модели: ru_RU-ruslan-medium.onnx (+ .onnx.json рядом)
+PIPER_MODEL_PATH = Path(
+    os.environ.get(
+        "PAPAPHONE_PIPER_MODEL",
+        str(PROJECT_ROOT / "models" / "ru_RU-ruslan-medium.onnx"),
+    )
+)
+PIPER_SAMPLE_RATE = int(os.environ.get("PAPAPHONE_PIPER_SAMPLE_RATE", "22050"))
 
 # Параметры записи для Vosk: 16 kHz моно, как рекомендует Vosk
 SAMPLE_RATE = 16000
