@@ -30,8 +30,17 @@ def _wait_for_call_end(ctx: ScenarioContext) -> None:
     Работает короткими квантами ASR (3 с):
     - Если пользователь говорит «положи трубку» / «сброс» / «отбой» → вешает сам.
     - Если AT+CLCC пустой (звонок завершился удалённо) → объявляет и выходит.
-    Без модема — выходит сразу (нет смысла ждать).
+    В демо-режиме (mock_modem) — симулирует звонок, ждёт голосовой команды завершения.
     """
+    if ctx.mock_modem:
+        ctx.tts.say("Идёт демо-звонок. Скажите «положи трубку» для завершения.")
+        while True:
+            text = ctx.asr.listen(timeout_s=_CALL_POLL_S)
+            if text and any(w in text.lower() for w in _HANGUP_WORDS):
+                ctx.tts.say("Звонок завершён.")
+                return
+        return
+
     if not ctx.modem_serial:
         return
 
@@ -73,6 +82,7 @@ class CallContactScenario(BaseScenario):
                 ctx.tts.say("Не удалось начать звонок. Проверьте связь.")
         elif ctx.mock_modem:
             ctx.tts.say(f"Демо: звоним {display}.")
+            _wait_for_call_end(ctx)
         else:
             ctx.tts.say("Модем не подключён.")
 
@@ -95,6 +105,7 @@ class CallNumberScenario(BaseScenario):
                 ctx.tts.say("Не удалось набрать номер. Проверьте связь.")
         elif ctx.mock_modem:
             ctx.tts.say(f"Демо: набираю {spoken}.")
+            _wait_for_call_end(ctx)
         else:
             ctx.tts.say("Модем не подключён.")
 
@@ -150,6 +161,9 @@ class IncomingCallScenario(BaseScenario):
             from src.modem import call as modem_call
             modem_call.answer(ctx.modem_serial)
             ctx.tts.say("Звонок принят.")
+            _wait_for_call_end(ctx)
+        elif ctx.mock_modem:
+            ctx.tts.say("Демо: звонок принят.")
             _wait_for_call_end(ctx)
         else:
             ctx.tts.say("Модем не подключён.")

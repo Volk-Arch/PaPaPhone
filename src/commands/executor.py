@@ -35,6 +35,24 @@ def _first_word(s: str) -> str:
     return parts[0] if parts else ""
 
 
+def _phrase_in_text(phrase: str, text: str) -> bool:
+    """
+    Проверить что фраза встречается в тексте как целое слово/словосочетание,
+    а не как подстрока внутри слова.
+    Пример: «позвони» НЕ матчит «позвонить», но матчит «позвони тесту».
+    """
+    if phrase == text:
+        return True
+    pattern = r"(?<!\w)" + re.escape(phrase) + r"(?!\w)"
+    return bool(re.search(pattern, text))
+
+
+def _remove_phrase(phrase: str, text: str) -> str:
+    """Удалить первое целословное вхождение фразы из текста."""
+    pattern = r"(?<!\w)" + re.escape(phrase) + r"(?!\w)"
+    return re.sub(pattern, "", text, count=1).strip()
+
+
 def match_command(
     text: str,
     commands: Optional[List[Dict[str, Any]]] = None,
@@ -53,10 +71,10 @@ def match_command(
 
     for action, phrases in phrases_by_action.items():
         for phrase in phrases:
-            if phrase == normalized or phrase in normalized:
+            if _phrase_in_text(phrase, normalized):
                 slot_name = slot_by_action.get(action)
                 if slot_name == "contact_name":
-                    rest = normalized.replace(phrase, "").strip()
+                    rest = _remove_phrase(phrase, normalized)
                     if rest:
                         return MatchedCommand(action=action, slot_value=_first_word(rest))
                 if slot_name == "number":
