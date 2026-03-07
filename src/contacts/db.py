@@ -3,6 +3,9 @@
 # https://polyformproject.org/licenses/noncommercial/1.0.0/
 """
 SQLite-хранилище контактов: создание схемы, CRUD, поиск по имени и алиасам.
+
+Поиск использует морфологическую нормализацию (pymorphy3), чтобы склонения
+имён распознавались корректно: «позвони Оле» → найдёт «Оля».
 """
 import json
 import re
@@ -11,6 +14,24 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from src.config import CONTACTS_DB_PATH, DATA_DIR
+
+# ---------------------------------------------------------------------------
+# Морфологический анализатор (pymorphy3). Graceful fallback если не установлен.
+# ---------------------------------------------------------------------------
+try:
+    import pymorphy3 as _pymorphy3
+    _morph = _pymorphy3.MorphAnalyzer()
+
+    def _to_normal_form(word: str) -> str:
+        """Привести слово к нормальной форме (именительный падеж, ед. число)."""
+        if not word:
+            return word
+        return _morph.parse(word)[0].normal_form
+
+except ImportError:  # pragma: no cover
+    def _to_normal_form(word: str) -> str:  # type: ignore[misc]
+        """Заглушка: pymorphy3 не установлен, возвращает слово как есть."""
+        return word.lower()
 
 
 def _ensure_data_dir() -> None:
@@ -61,15 +82,31 @@ def _normalize_for_search(s: str) -> str:
     return s.lower().strip()
 
 
+def _matches(stored: str, query_raw: str, query_norm: str) -> bool:
+    """
+    Проверить совпадение строки `stored` с запросом двумя способами:
+    1. Сырое сравнение (подстрока): «оле» in «оле» — точное написание.
+    2. Морфологическое: normal_form(stored) == query_norm — разные падежи.
+    """
+    s = _normalize_for_search(stored)
+    if s == query_raw or query_raw in s or s in query_raw:
+        return True
+    s_norm = _to_normal_form(s)
+    return s_norm == query_norm or query_norm in s_norm or s_norm in query_norm
+
+
 def find_by_name_or_alias(query: str) -> List[Tuple[int, str, str]]:
     """
     Поиск контакта по имени или любому алиасу (без учёта регистра).
+    Поддерживает склонения: «Оле» найдёт «Оля», «маме» найдёт «мама».
     Возвращает список (id, name, phone).
     """
     init_db()
-    q = _normalize_for_search(query)
-    if not q:
+    q_raw = _normalize_for_search(query)
+    if not q_raw:
         return []
+    q_norm = _to_normal_form(q_raw)  # нормализованная форма запроса
+
     conn = _get_connection()
     try:
         cur = conn.execute(
@@ -77,8 +114,7 @@ def find_by_name_or_alias(query: str) -> List[Tuple[int, str, str]]:
         )
         results: List[Tuple[int, str, str]] = []
         for row in cur:
-            name_norm = _normalize_for_search(row["name"])
-            if name_norm == q or q in name_norm or name_norm in q:
+            if _matches(row["name"], q_raw, q_norm):
                 results.append((row["id"], row["name"], row["phone"]))
                 continue
             try:
@@ -86,8 +122,7 @@ def find_by_name_or_alias(query: str) -> List[Tuple[int, str, str]]:
             except json.JSONDecodeError:
                 aliases = []
             for alias in aliases:
-                alias_norm = _normalize_for_search(str(alias))
-                if alias_norm == q or q in alias_norm or alias_norm in q:
+                if _matches(str(alias), q_raw, q_norm):
                     results.append((row["id"], row["name"], row["phone"]))
                     break
         return results
