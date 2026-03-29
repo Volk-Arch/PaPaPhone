@@ -90,7 +90,9 @@ class TTS:
             except subprocess.TimeoutExpired:
                 print("TTS: таймаут piper.", file=sys.stderr)
             except Exception as e:
-                print(f"TTS: ошибка — {e}", file=sys.stderr)
+                print(f"TTS: ошибка воспроизведения — {e}", file=sys.stderr)
+                # Помечаем что аудио недоступно — дальше только консоль
+                self._piper_bin = None
 
         if block:
             _play()

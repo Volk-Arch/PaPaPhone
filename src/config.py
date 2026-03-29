@@ -3,7 +3,7 @@
 # https://polyformproject.org/licenses/noncommercial/1.0.0/
 """
 Конфигурация PaPaPhone.
-Пути и параметры задаются здесь или через переменные окружения.
+Параметры загружаются из data/.env (если есть), потом из переменных окружения.
 """
 import os
 from pathlib import Path
@@ -11,8 +11,25 @@ from pathlib import Path
 # Корень проекта (каталог с README.md)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
+# Загрузить .env файл если есть (без внешних зависимостей)
+_ENV_FILE = PROJECT_ROOT / "data" / ".env"
+if _ENV_FILE.exists():
+    with open(_ENV_FILE, encoding="utf-8") as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if not _line or _line.startswith("#"):
+                continue
+            if "=" in _line:
+                _key, _, _val = _line.partition("=")
+                _key = _key.strip()
+                _val = _val.strip().strip('"').strip("'")
+                # Не перезаписываем уже заданные env (приоритет у shell)
+                if _key not in os.environ:
+                    os.environ[_key] = _val
+
 # Модель Vosk: имя папки в models/ (скачать с https://alphacephei.com/vosk/models)
-# Примеры: vosk-model-small-ru-0.22, vosk-model-small-en-us-0.15
+#   vosk-model-small-ru-0.22  — 45 MB, ~300 MB RAM (быстрая, лёгкая)
+#   vosk-model-ru-0.42        — 1.8 GB, ~3-4 GB RAM (точнее, но тяжёлая)
 VOSK_MODEL_NAME = os.environ.get("PAPAPHONE_VOSK_MODEL", "vosk-model-small-ru-0.22")
 VOSK_MODEL_PATH = PROJECT_ROOT / "models" / VOSK_MODEL_NAME
 
@@ -26,6 +43,15 @@ MODEM_TIMEOUT_WRITE_S = 1.0
 DATA_DIR = PROJECT_ROOT / "data"
 CONTACTS_DB_PATH = DATA_DIR / "papaphone.db"
 COMMANDS_YAML_PATH = DATA_DIR / "commands.yaml"
+
+# Экстренный вызов: номер по умолчанию 112 (единая служба спасения РФ)
+EMERGENCY_NUMBER = os.environ.get("PAPAPHONE_EMERGENCY_NUMBER", "112")
+
+# Адрес проживания — озвучивается по команде «адрес» (для экстренных служб)
+HOME_ADDRESS = os.environ.get(
+    "PAPAPHONE_HOME_ADDRESS",
+    "Адрес не задан. Установите переменную PAPAPHONE_HOME_ADDRESS.",
+)
 
 # Аудио: устройство записи/воспроизведения (None = по умолчанию в системе)
 # На Orange Pi задать индекс ALSA при необходимости, например 1 для USB-микрофона

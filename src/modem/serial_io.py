@@ -6,6 +6,7 @@
 Отправка AT-команд и чтение ответов.
 """
 import re
+import threading
 import serial
 from typing import Optional
 
@@ -36,6 +37,7 @@ class ModemSerial:
         self.timeout_read = timeout_read
         self.timeout_write = timeout_write
         self._ser: Optional[serial.Serial] = None
+        self.lock = threading.Lock()
 
     def open(self) -> None:
         """Открыть последовательный порт."""
@@ -66,30 +68,35 @@ class ModemSerial:
     def send_at(self, cmd: str, term: str = "\r\n") -> str:
         """
         Отправить AT-команду и вернуть весь ответ до OK/ERROR или по таймауту.
-        cmd — строка без \\r\\n (добавляются автоматически).
+        Потокобезопасно (self.lock). Бросает SerialIOError при потере порта.
         """
         if self._ser is None or not self._ser.is_open:
             raise SerialIOError("Порт не открыт")
-        cmd_line = cmd.strip() + term
-        self._ser.write(cmd_line.encode("utf-8"))
-        self._ser.flush()
-        response: list[str] = []
-        while True:
-            line = self._ser.readline()
-            if not line:
-                break
+        with self.lock:
             try:
-                decoded = line.decode("utf-8", errors="replace").strip()
-            except Exception:
-                decoded = line.decode("latin-1", errors="replace").strip()
-            if not decoded:
-                continue
-            response.append(decoded)
-            if decoded in ("OK", "ERROR"):
-                break
-            if decoded.startswith("+CME ERROR") or decoded.startswith("+CMS ERROR"):
-                break
-        return "\n".join(response)
+                cmd_line = cmd.strip() + term
+                self._ser.write(cmd_line.encode("utf-8"))
+                self._ser.flush()
+                response: list[str] = []
+                while True:
+                    line = self._ser.readline()
+                    if not line:
+                        break
+                    try:
+                        decoded = line.decode("utf-8", errors="replace").strip()
+                    except Exception:
+                        decoded = line.decode("latin-1", errors="replace").strip()
+                    if not decoded:
+                        continue
+                    response.append(decoded)
+                    if decoded in ("OK", "ERROR"):
+                        break
+                    if decoded.startswith("+CME ERROR") or decoded.startswith("+CMS ERROR"):
+                        break
+                return "\n".join(response)
+            except serial.SerialException as e:
+                self._ser = None
+                raise SerialIOError(f"Порт потерян: {e}") from e
 
     def send_at_and_check(self, cmd: str) -> bool:
         """Отправить команду и вернуть True, если ответ содержит OK."""
@@ -123,8 +130,12 @@ class ModemSerial:
                 if "ERROR" in decoded:
                     break
             return "\n".join(response)
+        except serial.SerialException as e:
+            self._ser = None
+            raise SerialIOError(f"Порт потерян: {e}") from e
         finally:
-            self._ser.timeout = old_timeout
+            if self._ser is not None:
+                self._ser.timeout = old_timeout
 
     def __enter__(self) -> "ModemSerial":
         self.open()

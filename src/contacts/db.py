@@ -22,16 +22,20 @@ try:
     import pymorphy3 as _pymorphy3
     _morph = _pymorphy3.MorphAnalyzer()
 
-    def _to_normal_form(word: str) -> str:
-        """Привести слово к нормальной форме (именительный падеж, ед. число)."""
+    def _to_normal_forms(word: str) -> set:
+        """Все возможные нормальные формы слова (именительный падеж, ед. число).
+
+        pymorphy3 может дать несколько вариантов разбора с одинаковым score,
+        например «ане» → {«ана», «аня»}. Для поиска контактов важно проверить все.
+        """
         if not word:
-            return word
-        return _morph.parse(word)[0].normal_form
+            return {word}
+        return {p.normal_form for p in _morph.parse(word)}
 
 except ImportError:  # pragma: no cover
-    def _to_normal_form(word: str) -> str:  # type: ignore[misc]
-        """Заглушка: pymorphy3 не установлен, возвращает слово как есть."""
-        return word.lower()
+    def _to_normal_forms(word: str) -> set:  # type: ignore[misc]
+        """Заглушка: pymorphy3 не установлен."""
+        return {word.lower()}
 
 
 def _ensure_data_dir() -> None:
@@ -46,7 +50,7 @@ def _get_connection() -> sqlite3.Connection:
 
 
 def init_db(schema_path: Optional[Path] = None) -> None:
-    """Создать таблицы из schema.sql при первом запуске."""
+    """Создать таблицы из schema.sql + миграция is_emergency."""
     if schema_path is None:
         schema_path = Path(__file__).parent / "schema.sql"
     _ensure_data_dir()
@@ -54,6 +58,11 @@ def init_db(schema_path: Optional[Path] = None) -> None:
     try:
         schema = schema_path.read_text(encoding="utf-8")
         conn.executescript(schema)
+        # Миграция: добавить is_emergency если старая БД без неё
+        try:
+            conn.execute("SELECT is_emergency FROM contacts LIMIT 1")
+        except sqlite3.OperationalError:
+            conn.execute("ALTER TABLE contacts ADD COLUMN is_emergency INTEGER DEFAULT 0")
         conn.commit()
     finally:
         conn.close()
@@ -82,17 +91,18 @@ def _normalize_for_search(s: str) -> str:
     return s.lower().strip()
 
 
-def _matches(stored: str, query_raw: str, query_norm: str) -> bool:
+def _matches(stored: str, query_raw: str, query_norms: set) -> bool:
     """
-    Проверить совпадение строки `stored` с запросом двумя способами:
-    1. Сырое сравнение (подстрока): «оле» in «оле» — точное написание.
-    2. Морфологическое: normal_form(stored) == query_norm — разные падежи.
+    Проверить совпадение строки `stored` с запросом:
+    1. Сырое сравнение (подстрока): «оле» in «оля» — близкое написание.
+    2. Морфологическое: пересечение нормальных форм stored и query.
+       «ане» → {ана, аня}, «Аня» → {аня} — пересечение {аня} → совпадение.
     """
     s = _normalize_for_search(stored)
     if s == query_raw or query_raw in s or s in query_raw:
         return True
-    s_norm = _to_normal_form(s)
-    return s_norm == query_norm or query_norm in s_norm or s_norm in query_norm
+    s_norms = _to_normal_forms(s)
+    return bool(s_norms & query_norms)
 
 
 def find_by_name_or_alias(query: str) -> List[Tuple[int, str, str]]:
@@ -105,7 +115,7 @@ def find_by_name_or_alias(query: str) -> List[Tuple[int, str, str]]:
     q_raw = _normalize_for_search(query)
     if not q_raw:
         return []
-    q_norm = _to_normal_form(q_raw)  # нормализованная форма запроса
+    q_norms = _to_normal_forms(q_raw)  # все нормальные формы запроса
 
     conn = _get_connection()
     try:
@@ -114,7 +124,7 @@ def find_by_name_or_alias(query: str) -> List[Tuple[int, str, str]]:
         )
         results: List[Tuple[int, str, str]] = []
         for row in cur:
-            if _matches(row["name"], q_raw, q_norm):
+            if _matches(row["name"], q_raw, q_norms):
                 results.append((row["id"], row["name"], row["phone"]))
                 continue
             try:
@@ -122,7 +132,7 @@ def find_by_name_or_alias(query: str) -> List[Tuple[int, str, str]]:
             except json.JSONDecodeError:
                 aliases = []
             for alias in aliases:
-                if _matches(str(alias), q_raw, q_norm):
+                if _matches(str(alias), q_raw, q_norms):
                     results.append((row["id"], row["name"], row["phone"]))
                     break
         return results
@@ -207,5 +217,33 @@ def delete_contact(contact_id: int) -> bool:
         conn.execute("DELETE FROM contacts WHERE id = ?", (contact_id,))
         conn.commit()
         return conn.total_changes > 0
+    finally:
+        conn.close()
+
+
+def set_emergency(contact_id: int, is_emergency: bool) -> bool:
+    """Пометить/снять пометку экстренного контакта."""
+    init_db()
+    conn = _get_connection()
+    try:
+        conn.execute(
+            "UPDATE contacts SET is_emergency = ? WHERE id = ?",
+            (1 if is_emergency else 0, contact_id),
+        )
+        conn.commit()
+        return conn.total_changes > 0
+    finally:
+        conn.close()
+
+
+def get_emergency_contacts() -> List[Tuple[int, str, str]]:
+    """Все экстренные контакты: (id, name, phone)."""
+    init_db()
+    conn = _get_connection()
+    try:
+        cur = conn.execute(
+            "SELECT id, name, phone FROM contacts WHERE is_emergency = 1 ORDER BY name"
+        )
+        return [(r["id"], r["name"], r["phone"]) for r in cur]
     finally:
         conn.close()

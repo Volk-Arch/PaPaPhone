@@ -5,14 +5,23 @@
 Базовый класс сценария и контекст выполнения.
 Сценарий — полный детерминированный диалог: TTS-подсказка → ASR-ответ → действие.
 """
+import sys
+import threading
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Optional
 
-# Слова подтверждения / отмены (проверяются через вхождение в распознанную строку)
-_YES_WORDS = ("да", "давай", "конечно", "ладно", "хорошо", "подтверждаю", "верно")
-_NO_WORDS  = ("нет", "не надо", "отмена", "отменить", "отмени", "стоп", "не")
+# Слова подтверждения (проверяются через вхождение в распознанную строку)
+YES_WORDS = ("да", "давай", "конечно", "ладно", "хорошо", "подтверждаю", "верно")
 
-CONFIRM_TIMEOUT = 8.0  # секунды ожидания ответа на подтверждение
+# Глобальные слова отмены — прерывают ЛЮБОЙ сценарий в ЛЮБОЙ момент
+CANCEL_WORDS = ("отмена", "отменить", "остановить", "стоп", "отмени", "хватит")
+
+CONFIRM_TIMEOUT = 8.0   # секунды ожидания ответа на подтверждение
+CANCEL_CONFIRM_S = 5.0  # секунды на подтверждение отмены (побольше, чтобы дед успел)
+
+
+class CancelledError(Exception):
+    """Пользователь подтвердил отмену. Сценарий прерван."""
 
 
 @dataclass
@@ -22,6 +31,38 @@ class ScenarioContext:
     modem_serial: Any  # src.modem.serial_io.ModemSerial или None
     mock_modem: bool
     listen_timeout: float = 12.0
+    in_call: bool = False
+    remote_hangup: threading.Event = field(default_factory=threading.Event)
+
+
+def is_cancel(text: str) -> bool:
+    """Проверить содержит ли текст слово отмены."""
+    if not text:
+        return False
+    t = text.lower()
+    return any(w in t for w in CANCEL_WORDS)
+
+
+def listen_or_cancel(ctx: ScenarioContext, timeout_s: float) -> Optional[str]:
+    """Обёртка над ctx.asr.listen() с проверкой глобальной отмены.
+
+    При cancel-слове — короткое подтверждение (5с).
+    «да» = CancelledError. Тишина/«нет» = продолжить (возвращает None).
+    """
+    text = ctx.asr.listen(timeout_s=timeout_s)
+    if text:
+        print(f"[ASR] «{text}»", file=sys.stderr)
+    if is_cancel(text):
+        print("[CANCEL] Обнаружено слово отмены, подтверждаю...", file=sys.stderr)
+        ctx.tts.say("Отменить? Скажите да.", block=True)
+        confirm = ctx.asr.listen(timeout_s=CANCEL_CONFIRM_S)
+        if confirm:
+            print(f"[CANCEL] Ответ: «{confirm}»", file=sys.stderr)
+        if confirm and any(w in confirm.lower() for w in YES_WORDS):
+            raise CancelledError()
+        ctx.tts.say("Продолжаем.")
+        return None
+    return text
 
 
 class BaseScenario:
@@ -30,18 +71,23 @@ class BaseScenario:
     def run(self, ctx: ScenarioContext) -> None:
         raise NotImplementedError
 
+    def _listen(self, ctx: ScenarioContext, timeout_s: float) -> Optional[str]:
+        """Слушать с проверкой глобальной отмены."""
+        return listen_or_cancel(ctx, timeout_s)
+
     def _confirm(self, ctx: ScenarioContext, prompt: str) -> bool:
         """
         Озвучить prompt, дождаться да/нет.
         Возвращает True только при явном «да». Молчание или неразборчивость → отмена.
+        Бросает CancelledError при подтверждённом слове отмены.
         """
         ctx.tts.say(prompt)
-        answer = ctx.asr.listen(timeout_s=CONFIRM_TIMEOUT)
+        answer = self._listen(ctx, CONFIRM_TIMEOUT)
         if not answer or not answer.strip():
             ctx.tts.say("Не расслышала. Отменено.")
             return False
         a = answer.lower().strip()
-        if any(w in a for w in _YES_WORDS):
+        if any(w in a for w in YES_WORDS):
             return True
         ctx.tts.say("Отменено.")
         return False

@@ -2,11 +2,10 @@
 # SPDX-License-Identifier: LicenseRef-PolyForm-Noncommercial-1.0.0
 # https://polyformproject.org/licenses/noncommercial/1.0.0/
 """
-Маршрутизация распознанного текста → сценарий.
+Маршрутизация распознанного текста -> сценарий.
 
-get_scenario(text) — единственная публичная функция.
-Возвращает экземпляр сценария или None, если текст не распознан.
-IncomingCallScenario экспортируется для использования в main.py.
+get_scenario(text) -- единственная публичная функция.
+IncomingCallScenario экспортируется для main.py / FSM.
 """
 from typing import Optional
 
@@ -16,30 +15,42 @@ from src.scenarios.call import (
     AnswerScenario,
     CallContactScenario,
     CallNumberScenario,
+    EmergencyScenario,
     HangupScenario,
     IncomingCallScenario,
 )
-from src.scenarios.contacts import AddContactScenario
+from src.scenarios.contacts import (
+    AddContactScenario,
+    FindContactScenario,
+    SecretMenuScenario,
+)
 from src.scenarios.info import (
+    AddressScenario,
     HelpScenario,
     ListContactsScenario,
-    SignalScenario,
     WhatTimeScenario,
 )
-from src.scenarios.sms import ReadSMSScenario
+from src.scenarios.sms import ReadSMSScenario, ReadUnreadSMSScenario
 
 __all__ = ["get_scenario", "IncomingCallScenario"]
 
-# Сценарии без слота (action → класс)
 _SIMPLE: dict[str, type[BaseScenario]] = {
-    "hangup":        HangupScenario,
-    "answer":        AnswerScenario,
-    "what_time":     WhatTimeScenario,
-    "help":          HelpScenario,
-    "signal":        SignalScenario,
-    "list_contacts": ListContactsScenario,
-    "read_sms":      ReadSMSScenario,
-    "add_contact":   AddContactScenario,
+    "emergency":       EmergencyScenario,
+    "hangup":          HangupScenario,
+    "answer":          AnswerScenario,
+    "what_time":       WhatTimeScenario,
+    "help":            HelpScenario,
+    "read_sms":        ReadSMSScenario,
+    "read_unread_sms": ReadUnreadSMSScenario,
+    "add_contact":     AddContactScenario,
+    "list_contacts":   ListContactsScenario,
+    "address":         AddressScenario,
+    "secret_menu":     SecretMenuScenario,
+}
+
+_WITH_CONTACT: dict[str, type[BaseScenario]] = {
+    "call_contact": CallContactScenario,
+    "find_contact": FindContactScenario,
 }
 
 
@@ -52,15 +63,15 @@ def get_scenario(text: str) -> Optional[BaseScenario]:
     action = matched.action
     slot = matched.slot_value
 
-    if action == "call_contact":
-        if not slot:
-            return None  # имя не распознано
-        return CallContactScenario(slot)
-
     if action == "call_number":
         if not slot:
             return None
         return CallNumberScenario(slot)
+
+    if action in _WITH_CONTACT:
+        if not slot:
+            return None
+        return _WITH_CONTACT[action](slot)
 
     cls = _SIMPLE.get(action)
     return cls() if cls else None

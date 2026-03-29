@@ -2,13 +2,13 @@
 # SPDX-License-Identifier: LicenseRef-PolyForm-Noncommercial-1.0.0
 # https://polyformproject.org/licenses/noncommercial/1.0.0/
 """
-Информационные сценарии (не требуют подтверждения).
+Информационные сценарии.
 
-WhatTimeScenario     — который час
-HelpScenario         — список команд
-ListContactsScenario — назвать все контакты
-SignalScenario       — уровень сигнала сети
+WhatTimeScenario — который час
+HelpScenario     — список функций
+AddressScenario  — озвучить домашний адрес
 """
+from src.config import HOME_ADDRESS
 from src.contacts import db as contacts_db
 from src.scenarios.base import BaseScenario, ScenarioContext
 
@@ -24,46 +24,41 @@ class WhatTimeScenario(BaseScenario):
 class HelpScenario(BaseScenario):
     def run(self, ctx: ScenarioContext) -> None:
         ctx.tts.say(
-            "Доступные команды: "
-            "позвони и имя контакта. "
-            "Набери и номер телефона. "
-            "Положи трубку. "
-            "Ответь на звонок. "
-            "Прочитай смс. "
+            "Вот что я умею. "
+            "Позвони и имя. "
+            "Набери номер. "
+            "Найди и имя. "
+            "Добавь контакт. "
             "Список контактов. "
-            "Уровень сигнала. "
-            "Который час."
+            "Ответь. "
+            "Положи трубку. "
+            "Сообщения. "
+            "Новые сообщения. "
+            "Который час. "
+            "Адрес. "
+            "Спасите — экстренный вызов. "
+            "Стоп — отменить."
         )
 
 
 class ListContactsScenario(BaseScenario):
+    """Зачитать все контакты с пометкой экстренных."""
+
     def run(self, ctx: ScenarioContext) -> None:
-        contacts = contacts_db.list_all_contacts()
-        if not contacts:
+        all_contacts = contacts_db.list_all_contacts()
+        if not all_contacts:
             ctx.tts.say("Книга контактов пуста.")
             return
-        names = [c[1] for c in contacts[:10]]
-        ctx.tts.say("Контакты: " + ", ".join(names) + ".")
-        if len(contacts) > 10:
-            ctx.tts.say(f"И ещё {len(contacts) - 10} контактов.")
+        emergency = {c[0] for c in contacts_db.get_emergency_contacts()}
+        names = []
+        for cid, name, _ in all_contacts:
+            label = f"{name}, экстренный" if cid in emergency else name
+            names.append(label)
+        ctx.tts.say(f"Контактов: {len(all_contacts)}. {', '.join(names)}.")
 
 
-class SignalScenario(BaseScenario):
+class AddressScenario(BaseScenario):
+    """Озвучить домашний адрес."""
+
     def run(self, ctx: ScenarioContext) -> None:
-        if ctx.modem_serial:
-            from src.modem import at_commands as at
-            rssi, _ = at.get_signal_quality(ctx.modem_serial)
-            if rssi is None:
-                ctx.tts.say("Не удалось получить уровень сигнала.")
-            elif rssi == 99:
-                ctx.tts.say("Уровень сигнала неизвестен. Нет сети.")
-            elif rssi >= 20:
-                ctx.tts.say(f"Сигнал хороший: {rssi} из 31.")
-            elif rssi >= 10:
-                ctx.tts.say(f"Сигнал слабый: {rssi} из 31.")
-            else:
-                ctx.tts.say(f"Сигнал очень слабый: {rssi} из 31.")
-        elif ctx.mock_modem:
-            ctx.tts.say("Демо: сигнал хороший, 20 из 31.")
-        else:
-            ctx.tts.say("Модем не подключён.")
+        ctx.tts.say(f"Ваш адрес: {HOME_ADDRESS}")

@@ -66,7 +66,8 @@ class ASR:
 
     def _audio_callback(self, indata, frames, time_info, status) -> None:
         if status:
-            return
+            import sys
+            print(f"[ASR] Аудио: {status}", file=sys.stderr)
         try:
             self._audio_queue.put(bytes(indata))
         except queue.Full:
@@ -102,41 +103,54 @@ class ASR:
         """
         Слушать микрофон до первой распознанной фразы или таймаута.
         Возвращает текст фразы или None.
+        При потере микрофона пытается переподключить стрим.
         """
         if self._recognizer is None:
             self.load_model()
-        if self._stream is None or not self._stream.active:
-            self.start_stream()
+        try:
+            if self._stream is None or not self._stream.active:
+                self.start_stream()
+        except Exception as e:
+            import sys
+            print(f"[ASR] Не удалось открыть микрофон: {e}", file=sys.stderr)
+            return None
 
         self._recognizer.Reset()
         phrase_parts = []
         import time
         deadline = time.monotonic() + timeout_s
 
-        while time.monotonic() < deadline:
-            try:
-                chunk = self._audio_queue.get(timeout=0.2)
-            except queue.Empty:
-                chunk = None
-            if chunk:
-                if self._recognizer.AcceptWaveform(chunk):
-                    result = json.loads(self._recognizer.Result())
-                    text = (result.get("text") or "").strip()
-                    if text:
-                        return text
-                else:
-                    partial = json.loads(self._recognizer.PartialResult())
-                    pt = (partial.get("partial") or "").strip()
-                    if pt:
-                        phrase_parts.append(pt)
-            if self._stop_event.is_set():
-                break
+        try:
+            while time.monotonic() < deadline:
+                try:
+                    chunk = self._audio_queue.get(timeout=0.2)
+                except queue.Empty:
+                    chunk = None
+                if chunk:
+                    if self._recognizer.AcceptWaveform(chunk):
+                        result = json.loads(self._recognizer.Result())
+                        text = (result.get("text") or "").strip()
+                        if text:
+                            return text
+                    else:
+                        partial = json.loads(self._recognizer.PartialResult())
+                        pt = (partial.get("partial") or "").strip()
+                        if pt:
+                            phrase_parts.append(pt)
+                if self._stop_event.is_set():
+                    break
 
-        if phrase_parts:
-            return phrase_parts[-1]
-        result = json.loads(self._recognizer.FinalResult())
-        text = (result.get("text") or "").strip()
-        return text if text else None
+            if phrase_parts:
+                return phrase_parts[-1]
+            result = json.loads(self._recognizer.FinalResult())
+            text = (result.get("text") or "").strip()
+            return text if text else None
+        except Exception as e:
+            import sys
+            print(f"[ASR] Ошибка распознавания: {e}", file=sys.stderr)
+            # Сбросить стрим — при следующем listen() попробует переоткрыть
+            self.stop_stream()
+            return None
 
     def shutdown(self) -> None:
         """Остановить поток и освободить ресурсы."""

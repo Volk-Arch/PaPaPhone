@@ -11,6 +11,7 @@ models/
 
 # Runtime-данные
 data/papaphone.db
+data/.env
 
 # Логи
 *.log
