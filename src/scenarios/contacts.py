@@ -135,6 +135,12 @@ class AddContactScenario(BaseScenario):
             return
         name = name_raw.strip()
 
+        # Проверка дубликата
+        existing = contacts_db.find_by_name_or_alias(name)
+        if existing:
+            ctx.tts.say(f"Контакт {existing[0][1]} уже есть в книге.")
+            return
+
         # Шаг 2: номер
         ctx.tts.say(
             f"Имя: {name}. Диктуйте номер — можно по одной цифре или группами. "
@@ -206,12 +212,85 @@ class AddContactScenario(BaseScenario):
         ):
             return
 
-        contacts_db.add_contact(name, number)
+        # Шаг 4: алиас (необязательно)
+        ctx.tts.say(
+            f"Как ещё называть {name}? Например сын или мама. "
+            "Скажите «нет» чтобы пропустить."
+        )
+        alias_raw = self._listen(ctx, ctx.listen_timeout)
+        aliases = []
+        if alias_raw and alias_raw.strip():
+            a = alias_raw.lower().strip()
+            if a not in ("нет", "не надо", "пропустить", "нету"):
+                # Проверка: не занято ли прозвище другим контактом
+                conflict = contacts_db.find_by_name_or_alias(a)
+                if conflict:
+                    ctx.tts.say(
+                        f"Прозвище {a} уже используется для {conflict[0][1]}. Пропускаю."
+                    )
+                else:
+                    aliases.append(a)
+                    ctx.tts.say(f"Прозвище: {a}.")
+
+        contacts_db.add_contact(name, number, aliases=aliases if aliases else None)
         ctx.tts.say(f"Контакт {name} добавлен.")
 
 
+class AliasContactScenario(BaseScenario):
+    """Добавить прозвище к существующему контакту."""
+
+    def __init__(self, contact_name: str) -> None:
+        self._name = contact_name
+
+    def run(self, ctx: ScenarioContext) -> None:
+        results = contacts_db.find_by_name_or_alias(self._name)
+        if not results:
+            ctx.tts.say(f"Контакт {self._name} не найден.")
+            return
+
+        _id, display, phone = results[0]
+
+        ctx.tts.say(f"Контакт {display}. Скажите прозвище.")
+        alias_raw = self._listen(ctx, ctx.listen_timeout)
+        if not alias_raw or not alias_raw.strip():
+            ctx.tts.say("Не расслышала. Отменено.")
+            return
+
+        alias = alias_raw.lower().strip()
+
+        # Проверка: не занято ли другим контактом
+        conflict = contacts_db.find_by_name_or_alias(alias)
+        if conflict and conflict[0][0] != _id:
+            ctx.tts.say(
+                f"Прозвище {alias} уже используется для {conflict[0][1]}."
+            )
+            return
+
+        if self._confirm(ctx, f"Добавить прозвище {alias} для {display}? Да или нет."):
+            import json
+            conn = contacts_db._get_connection()
+            try:
+                row = conn.execute(
+                    "SELECT aliases FROM contacts WHERE id = ?", (_id,)
+                ).fetchone()
+                current = json.loads(row["aliases"] or "[]") if row else []
+                if alias in current:
+                    ctx.tts.say(f"{display} уже откликается на {alias}.")
+                else:
+                    current.append(alias)
+                    contacts_db.update_contact(_id, aliases=current)
+                    ctx.tts.say(f"Прозвище {alias} добавлено для {display}.")
+            finally:
+                conn.close()
+
+
+_FIND_CALL_WORDS = ("позвони", "позвонить", "звонок", "да")
+_FIND_ALIAS_WORDS = ("прозвище",)
+_FIND_RENAME_WORDS = ("переименуй", "переименовать", "имя")
+
+
 class FindContactScenario(BaseScenario):
-    """Найти контакт по имени, предложить позвонить."""
+    """Найти контакт → позвонить, прозвище или переименовать."""
 
     def __init__(self, contact_name: str) -> None:
         self._name = contact_name
@@ -225,9 +304,44 @@ class FindContactScenario(BaseScenario):
 
         _id, display, phone = results[0]
 
-        if self._confirm(ctx, f"Контакт {display}. Позвонить? Скажите да."):
+        ctx.tts.say(
+            f"Контакт {display}. "
+            "Позвонить, прозвище, или переименовать?"
+        )
+        answer = self._listen(ctx, CONFIRM_TIMEOUT)
+        if not answer or not answer.strip():
+            ctx.tts.say("Не расслышала.")
+            return
+
+        a = answer.lower().strip()
+
+        if any(w in a for w in _FIND_CALL_WORDS):
             from src.scenarios.call import CallContactScenario
             CallContactScenario(display).run(ctx)
+            return
+
+        if any(w in a for w in _FIND_ALIAS_WORDS):
+            AliasContactScenario(display).run(ctx)
+            return
+
+        if any(w in a for w in _FIND_RENAME_WORDS):
+            ctx.tts.say(f"Как назвать {display}? Скажите новое имя.")
+            new_name = self._listen(ctx, ctx.listen_timeout)
+            if not new_name or not new_name.strip():
+                ctx.tts.say("Не расслышала. Отменено.")
+                return
+            new_name = new_name.strip()
+            # Проверка дубликата
+            conflict = contacts_db.find_by_name_or_alias(new_name)
+            if conflict and conflict[0][0] != _id:
+                ctx.tts.say(f"Имя {new_name} уже занято контактом {conflict[0][1]}.")
+                return
+            if self._confirm(ctx, f"Переименовать {display} в {new_name}? Да или нет."):
+                contacts_db.update_contact(_id, name=new_name)
+                ctx.tts.say(f"Контакт переименован в {new_name}.")
+            return
+
+        ctx.tts.say("Не поняла.")
 
 
 _DELETE_WORDS = ("удали", "удалить", "убери", "убрать")

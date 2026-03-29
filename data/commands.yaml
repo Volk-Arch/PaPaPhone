@@ -58,6 +58,11 @@
     - добавь контакт
     - добавить контакт
 
+- action: alias_contact
+  phrases:
+    - прозвище
+  slot: contact_name
+
 - action: list_contacts
   phrases:
     - список контактов

@@ -21,6 +21,7 @@ from src.scenarios.call import (
 )
 from src.scenarios.contacts import (
     AddContactScenario,
+    AliasContactScenario,
     FindContactScenario,
     SecretMenuScenario,
 )
@@ -49,8 +50,9 @@ _SIMPLE: dict[str, type[BaseScenario]] = {
 }
 
 _WITH_CONTACT: dict[str, type[BaseScenario]] = {
-    "call_contact": CallContactScenario,
-    "find_contact": FindContactScenario,
+    "call_contact":   CallContactScenario,
+    "find_contact":   FindContactScenario,
+    "alias_contact":  AliasContactScenario,
 }
 
 
