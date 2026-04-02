@@ -44,9 +44,6 @@ DATA_DIR = PROJECT_ROOT / "data"
 CONTACTS_DB_PATH = DATA_DIR / "papaphone.db"
 COMMANDS_YAML_PATH = DATA_DIR / "commands.yaml"
 
-# Экстренный вызов: номер по умолчанию 112 (единая служба спасения РФ)
-EMERGENCY_NUMBER = os.environ.get("PAPAPHONE_EMERGENCY_NUMBER", "112")
-
 # Адрес проживания — озвучивается по команде «адрес» (для экстренных служб)
 HOME_ADDRESS = os.environ.get(
     "PAPAPHONE_HOME_ADDRESS",

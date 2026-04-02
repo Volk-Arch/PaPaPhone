@@ -203,14 +203,25 @@ class PhoneFSM:
         return True
 
     def _check_sms(self) -> None:
-        """Озвучить новые SMS из очереди (по одному за цикл IDLE)."""
+        """Уведомить о новых SMS.
+
+        Днём: озвучивает каждое SMS сразу.
+        Утром (после ночи): говорит только количество.
+        Дедушка сам скажет "новые сообщения" чтобы прослушать.
+        """
         if not self._sms_monitor:
             return
 
-        # Утреннее уведомление о накопленных за ночь
         pending = self._sms_monitor.pending_count()
+
+        # Утреннее уведомление о накопленных за ночь
         if pending > 0 and not self._sms_announced:
             self._sms_announced = True
+            self._ctx.tts.say(
+                f"У вас {pending} {'непрочитанное сообщение' if pending == 1 else 'непрочитанных сообщений'}. "
+                "Скажите «новые сообщения» чтобы прослушать."
+            )
+            return
 
         sms = self._sms_monitor.check_new_sms()
         if sms is None:

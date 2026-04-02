@@ -72,41 +72,115 @@ def _remove_phrase(phrase: str, text: str) -> str:
     return re.sub(pattern, "", text, count=1).strip()
 
 
+_FUZZY_CONTACT_THRESHOLD = 70  # порог Левенштейна для контактов
+
+
 def _resolve_contact_name(text: str, cmd_words: Set[str]) -> Optional[str]:
     """Найти имя контакта в тексте.
 
-    1. Пробуем каждое слово через БД контактов (морфология: "маме" → "Мама")
-    2. Если в БД не нашли — берём первое не-шумовое, не-командное слово
+    1. Точный матч через БД (морфология: "маме" → "Мама")
+    2. Fuzzy-матч: rapidfuzz по всем именам/алиасам из БД
+    3. Fallback: первое не-шумовое слово (контакт может быть не в БД)
     """
     from src.contacts import db as contacts_db
 
-    words = text.split()
+    words = [w for w in text.split() if w not in cmd_words and w not in _NOISE]
+    if not words:
+        return None
 
-    # Сначала ищем в БД — каждое слово
+    # Фаза 1: точный матч (морфология)
     for w in words:
-        if w in cmd_words or w in _NOISE:
-            continue
         results = contacts_db.find_by_name_or_alias(w)
         if results:
-            # Нашли в БД — возвращаем display name
             display = results[0][1]
             print(f"[CMD] Контакт из БД: «{w}» → {display}", file=sys.stderr)
             return display
 
-    # Fallback: первое незнакомое слово (контакт может быть ещё не в БД)
-    for w in words:
-        if w not in cmd_words and w not in _NOISE:
-            print(f"[CMD] Контакт fallback: «{w}»", file=sys.stderr)
-            return w
+    # Фаза 2: fuzzy по именам и алиасам
+    try:
+        from rapidfuzz import fuzz
+        import json
+
+        all_contacts = contacts_db.list_all_contacts()
+        best_score = 0.0
+        best_display = None
+
+        for _id, name, phone in all_contacts:
+            # Сравниваем каждое слово текста с именем и алиасами
+            candidates = [name.lower()]
+            # Морфологические формы имени (игорь → игорю, игоря, игорем...)
+            try:
+                import pymorphy3
+                morph = pymorphy3.MorphAnalyzer()
+                parsed = morph.parse(name.lower())
+                if parsed:
+                    for form in parsed[0].lexeme:
+                        candidates.append(form.word)
+            except ImportError:
+                pass
+            # Алиасы из БД
+            conn = contacts_db._get_connection()
+            try:
+                row = conn.execute(
+                    "SELECT aliases FROM contacts WHERE id = ?", (_id,)
+                ).fetchone()
+                if row and row["aliases"]:
+                    try:
+                        aliases = json.loads(row["aliases"])
+                        candidates.extend(a.lower() for a in aliases if a)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+            finally:
+                conn.close()
+
+            for w in words:
+                for candidate in candidates:
+                    score = fuzz.ratio(w, candidate)
+                    if score > best_score:
+                        best_score = score
+                        best_display = name
+
+        if best_score >= _FUZZY_CONTACT_THRESHOLD and best_display:
+            print(
+                f"[CMD] Контакт fuzzy: «{' '.join(words)}» → {best_display} (score={best_score:.0f})",
+                file=sys.stderr,
+            )
+            return best_display
+    except ImportError:
+        pass  # rapidfuzz не установлен
+
+    # Фаза 3: fallback — сырое слово
+    if words:
+        print(f"[CMD] Контакт fallback: «{words[0]}»", file=sys.stderr)
+        return words[0]
 
     return None
+
+
+# Глобальный FuzzyMatcher — инициализируется лениво при первом вызове
+_fuzzy_matcher = None
+
+
+def _get_fuzzy(commands: List[Dict[str, Any]]):
+    global _fuzzy_matcher
+    if _fuzzy_matcher is None:
+        try:
+            from src.commands.fuzzy import FuzzyMatcher
+            _fuzzy_matcher = FuzzyMatcher(commands)
+        except ImportError:
+            _fuzzy_matcher = False  # rapidfuzz не установлен
+    return _fuzzy_matcher if _fuzzy_matcher is not False else None
 
 
 def match_command(
     text: str,
     commands: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[MatchedCommand]:
-    """Сопоставить текст с командой из словаря."""
+    """Сопоставить текст с командой из словаря.
+
+    Фаза 1: Точный матч по фразам.
+    Фаза 2: Fuzzy (Левенштейн + эмбеддинги) если точный не нашёл.
+    """
     if not text or not text.strip():
         return None
 
@@ -118,6 +192,7 @@ def match_command(
     normalized = _normalize(text)
     print(f"[CMD] «{normalized}»", file=sys.stderr)
 
+    # Фаза 1: точный матч
     for action, phrases in phrases_by_action.items():
         for phrase in phrases:
             if _phrase_in_text(phrase, normalized):
@@ -132,5 +207,22 @@ def match_command(
                     if digits:
                         return MatchedCommand(action=action, slot_value=digits)
                 return MatchedCommand(action=action)
+
+    # Фаза 2: fuzzy fallback
+    fuzzy = _get_fuzzy(commands)
+    if fuzzy:
+        fm = fuzzy.match(normalized)
+        if fm:
+            action = fm.action
+            slot_name = slot_by_action.get(action)
+            if slot_name == "contact_name":
+                name = _resolve_contact_name(normalized, cmd_words)
+                if name:
+                    return MatchedCommand(action=action, slot_value=name)
+            if slot_name == "number":
+                digits = _extract_digits(text)
+                if digits:
+                    return MatchedCommand(action=action, slot_value=digits)
+            return MatchedCommand(action=action)
 
     return None

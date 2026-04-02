@@ -20,9 +20,11 @@ from src.modem.serial_io import ModemSerial
 
 _DEFAULT_POLL_S = 15.0
 
-# Ночные часы: SMS не озвучиваются сразу, копятся до утра
-_NIGHT_START = 23  # с 23:00
-_NIGHT_END = 7     # до 07:00
+# Ночные часы: SMS копятся, утром уведомление о количестве.
+# Настраивается в data/.env: PAPAPHONE_NIGHT_START, PAPAPHONE_NIGHT_END
+import os
+_NIGHT_START = int(os.environ.get("PAPAPHONE_NIGHT_START", "23"))
+_NIGHT_END = int(os.environ.get("PAPAPHONE_NIGHT_END", "9"))
 
 
 @dataclass

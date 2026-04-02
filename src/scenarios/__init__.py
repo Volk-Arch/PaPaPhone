@@ -27,8 +27,14 @@ from src.scenarios.contacts import (
 )
 from src.scenarios.info import (
     AddressScenario,
+    CallLogScenario,
+    ClearCallLogScenario,
     HelpScenario,
     ListContactsScenario,
+    ListEmergencyScenario,
+    SignalScenario,
+    VolumeDownScenario,
+    VolumeUpScenario,
     WhatTimeScenario,
 )
 from src.scenarios.sms import ReadSMSScenario, ReadUnreadSMSScenario
@@ -45,6 +51,12 @@ _SIMPLE: dict[str, type[BaseScenario]] = {
     "read_unread_sms": ReadUnreadSMSScenario,
     "add_contact":     AddContactScenario,
     "list_contacts":   ListContactsScenario,
+    "list_emergency":  ListEmergencyScenario,
+    "call_log":        CallLogScenario,
+    "signal":          SignalScenario,
+    "volume_up":       VolumeUpScenario,
+    "volume_down":     VolumeDownScenario,
+    "clear_call_log":  ClearCallLogScenario,
     "address":         AddressScenario,
     "secret_menu":     SecretMenuScenario,
 }

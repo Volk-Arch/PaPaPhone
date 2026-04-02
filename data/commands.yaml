@@ -67,9 +67,31 @@
   phrases:
     - список контактов
 
+- action: list_emergency
+  phrases:
+    - экстренные контакты
+
 - action: help
   phrases:
     - команды
+
+- action: call_log
+  phrases:
+    - последние звонки
+    - история звонков
+
+- action: signal
+  phrases:
+    - уровень сигнала
+    - сигнал
+
+- action: volume_up
+  phrases:
+    - громче
+
+- action: volume_down
+  phrases:
+    - тише
 
 - action: address
   phrases:
@@ -78,3 +100,8 @@
 - action: secret_menu
   phrases:
     - секретное меню
+
+- action: clear_call_log
+  phrases:
+    - очистить звонки
+    - очистить историю

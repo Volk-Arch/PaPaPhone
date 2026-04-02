@@ -5,3 +5,5 @@ sounddevice>=0.4.6
 PyYAML>=6.0
 numpy>=1.21
 pymorphy3>=1.0
+rapidfuzz>=3.0
+navec>=0.10.0

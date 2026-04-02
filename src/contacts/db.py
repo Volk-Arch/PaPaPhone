@@ -50,7 +50,7 @@ def _get_connection() -> sqlite3.Connection:
 
 
 def init_db(schema_path: Optional[Path] = None) -> None:
-    """Создать таблицы из schema.sql + миграция is_emergency."""
+    """Создать таблицы из schema.sql + миграции + контакт Скорая."""
     if schema_path is None:
         schema_path = Path(__file__).parent / "schema.sql"
     _ensure_data_dir()
@@ -58,11 +58,23 @@ def init_db(schema_path: Optional[Path] = None) -> None:
     try:
         schema = schema_path.read_text(encoding="utf-8")
         conn.executescript(schema)
-        # Миграция: добавить is_emergency если старая БД без неё
+        # Миграция: is_emergency
         try:
             conn.execute("SELECT is_emergency FROM contacts LIMIT 1")
         except sqlite3.OperationalError:
             conn.execute("ALTER TABLE contacts ADD COLUMN is_emergency INTEGER DEFAULT 0")
+        # Миграция: is_sos
+        try:
+            conn.execute("SELECT is_sos FROM contacts LIMIT 1")
+        except sqlite3.OperationalError:
+            conn.execute("ALTER TABLE contacts ADD COLUMN is_sos INTEGER DEFAULT 0")
+        # Контакт "Скорая" при первом запуске
+        row = conn.execute("SELECT id FROM contacts WHERE is_sos = 1").fetchone()
+        if not row:
+            conn.execute(
+                "INSERT INTO contacts (name, phone, aliases, is_sos) VALUES (?, ?, ?, 1)",
+                ("Скорая", "112", '["экстренная","спасение"]'),
+            )
         conn.commit()
     finally:
         conn.close()
@@ -245,5 +257,73 @@ def get_emergency_contacts() -> List[Tuple[int, str, str]]:
             "SELECT id, name, phone FROM contacts WHERE is_emergency = 1 ORDER BY name"
         )
         return [(r["id"], r["name"], r["phone"]) for r in cur]
+    finally:
+        conn.close()
+
+
+def get_sos_number() -> str:
+    """Номер экстренного вызова (is_sos=1). По умолчанию 112."""
+    init_db()
+    conn = _get_connection()
+    try:
+        row = conn.execute(
+            "SELECT phone FROM contacts WHERE is_sos = 1 LIMIT 1"
+        ).fetchone()
+        return row["phone"] if row else "112"
+    finally:
+        conn.close()
+
+
+def set_sos_number(phone: str) -> None:
+    """Обновить номер экстренного вызова."""
+    init_db()
+    conn = _get_connection()
+    try:
+        conn.execute("UPDATE contacts SET phone = ? WHERE is_sos = 1", (phone,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Журнал звонков
+# ---------------------------------------------------------------------------
+
+def log_call(phone: str, direction: str) -> None:
+    """Записать звонок в журнал. direction: 'in' или 'out'."""
+    init_db()
+    conn = _get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO call_log (phone, direction) VALUES (?, ?)",
+            (phone, direction),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def clear_call_log() -> None:
+    """Очистить историю звонков."""
+    init_db()
+    conn = _get_connection()
+    try:
+        conn.execute("DELETE FROM call_log")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_call_log(limit: int = 10) -> List[Tuple[str, str, str]]:
+    """Последние звонки: (phone, direction, timestamp)."""
+    init_db()
+    conn = _get_connection()
+    try:
+        cur = conn.execute(
+            "SELECT phone, direction, timestamp FROM call_log "
+            "ORDER BY id DESC LIMIT ?",
+            (limit,),
+        )
+        return [(r["phone"], r["direction"], r["timestamp"]) for r in cur]
     finally:
         conn.close()
