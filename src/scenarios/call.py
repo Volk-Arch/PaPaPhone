@@ -1,6 +1,6 @@
 # Copyright (c) 2024 Igor Kriusov <kriusovia@gmail.com>
-# SPDX-License-Identifier: LicenseRef-PolyForm-Noncommercial-1.0.0
-# https://polyformproject.org/licenses/noncommercial/1.0.0/
+# SPDX-License-Identifier: GPL-3.0-or-later
+# https://www.gnu.org/licenses/gpl-3.0.html
 """
 Сценарии звонков.
 
@@ -49,10 +49,8 @@ def _is_cancel_or_hangup(text: str) -> str | None:
 
 
 def _do_hangup(ctx: ScenarioContext) -> None:
-    """Повесить трубку (реальную или демо)."""
-    if ctx.modem_serial:
-        from src.modem import call as modem_call
-        modem_call.hangup(ctx.modem_serial)
+    """Повесить трубку."""
+    ctx.call_provider.hangup()
 
 
 def _confirm_cancel_call(ctx: ScenarioContext) -> bool:
@@ -77,24 +75,6 @@ def _wait_for_call_end(ctx: ScenarioContext) -> None:
             ctx.tts.say(
                 "Идёт демо-звонок. Скажите «положи трубку» или нажмите Enter для сброса."
             )
-            while True:
-                text = ctx.asr.listen(timeout_s=_CALL_POLL_S)
-                if text:
-                    action = _is_cancel_or_hangup(text)
-                    if action == "cancel" and _confirm_cancel_call(ctx):
-                        ctx.tts.say("Звонок завершён.")
-                        raise CancelledError()
-                    if action == "hangup":
-                        ctx.tts.say("Звонок завершён.")
-                        return
-                if ctx.remote_hangup.is_set():
-                    ctx.tts.say("Собеседник завершил звонок.")
-                    return
-            return
-
-        if not ctx.modem_serial:
-            return
-
         while True:
             text = ctx.asr.listen(timeout_s=_CALL_POLL_S)
             if text:
@@ -108,8 +88,13 @@ def _wait_for_call_end(ctx: ScenarioContext) -> None:
                     ctx.tts.say("Звонок завершён.")
                     return
 
-            from src.modem.call import get_call_status
-            if get_call_status(ctx.modem_serial) is None:
+            # Собеседник повесил трубку (Enter в демо)
+            if ctx.remote_hangup.is_set():
+                ctx.tts.say("Собеседник завершил звонок.")
+                return
+
+            # Проверяем статус через провайдер (AT или VoIP)
+            if not ctx.mock_modem and ctx.call_provider.get_call_status() is None:
                 ctx.tts.say("Звонок завершён.")
                 return
     finally:
@@ -162,17 +147,10 @@ class EmergencyScenario(BaseScenario):
 
         ctx.tts.say(f"Звоню {spoken}.")
 
-        if ctx.modem_serial:
-            from src.modem import call as modem_call
-            if modem_call.dial(ctx.modem_serial, sos_number):
-                _wait_for_call_end(ctx)
-            else:
-                ctx.tts.say("Не удалось позвонить. Проверьте связь.")
-        elif ctx.mock_modem:
-            ctx.tts.say(f"Демо: экстренный вызов {spoken}.")
+        if ctx.call_provider.dial(sos_number):
             _wait_for_call_end(ctx)
         else:
-            ctx.tts.say("Модем не подключён.")
+            ctx.tts.say("Не удалось позвонить.")
 
 
 class CallContactScenario(BaseScenario):
@@ -191,18 +169,11 @@ class CallContactScenario(BaseScenario):
             return
 
         contacts_db.log_call(phone, "out")
-        if ctx.modem_serial:
-            from src.modem import call as modem_call
-            if modem_call.dial(ctx.modem_serial, phone):
-                ctx.tts.say(f"Звоним {display}.")
-                _wait_for_call_end(ctx)
-            else:
-                ctx.tts.say("Не удалось начать звонок. Проверьте связь.")
-        elif ctx.mock_modem:
-            ctx.tts.say(f"Демо: звоним {display}.")
+        ctx.tts.say(f"Звоним {display}.")
+        if ctx.call_provider.dial(phone):
             _wait_for_call_end(ctx)
         else:
-            ctx.tts.say("Модем не подключён.")
+            ctx.tts.say("Не удалось начать звонок.")
 
 
 class CallNumberScenario(BaseScenario):
@@ -214,25 +185,16 @@ class CallNumberScenario(BaseScenario):
         if not self._confirm(ctx, f"Набрать номер {spoken}. Скажите да или нет."):
             return
 
-        if ctx.modem_serial:
-            from src.modem import call as modem_call
-            if modem_call.dial(ctx.modem_serial, self._number):
-                ctx.tts.say("Набираю номер.")
-                _wait_for_call_end(ctx)
-            else:
-                ctx.tts.say("Не удалось набрать номер. Проверьте связь.")
-        elif ctx.mock_modem:
-            ctx.tts.say(f"Демо: набираю {spoken}.")
+        ctx.tts.say(f"Набираю {spoken}.")
+        if ctx.call_provider.dial(self._number):
             _wait_for_call_end(ctx)
         else:
-            ctx.tts.say("Модем не подключён.")
+            ctx.tts.say("Не удалось набрать номер.")
 
 
 class HangupScenario(BaseScenario):
     def run(self, ctx: ScenarioContext) -> None:
-        if ctx.modem_serial:
-            from src.modem import call as modem_call
-            modem_call.hangup(ctx.modem_serial)
+        ctx.call_provider.hangup()
         ctx.tts.say("Звонок завершён.")
 
 
@@ -240,16 +202,9 @@ class AnswerScenario(BaseScenario):
     """Ответить на входящий по команде пользователя (без подтверждения)."""
 
     def run(self, ctx: ScenarioContext) -> None:
-        if ctx.modem_serial:
-            from src.modem import call as modem_call
-            modem_call.answer(ctx.modem_serial)
-            ctx.tts.say("Принимаю звонок.")
-            _wait_for_call_end(ctx)
-        elif ctx.mock_modem:
-            ctx.tts.say("Демо: принимаю звонок.")
-            _wait_for_call_end(ctx)
-        else:
-            ctx.tts.say("Модем не подключён.")
+        ctx.tts.say("Принимаю звонок.")
+        ctx.call_provider.answer()
+        _wait_for_call_end(ctx)
 
 
 class IncomingCallScenario(BaseScenario):
@@ -267,19 +222,10 @@ class IncomingCallScenario(BaseScenario):
             caller = "неизвестный номер"
 
         if not self._confirm(ctx, f"Входящий звонок от {caller}. Ответить? Да или нет."):
-            if ctx.modem_serial:
-                from src.modem import call as modem_call
-                modem_call.hangup(ctx.modem_serial)
+            ctx.call_provider.hangup()
             ctx.tts.say("Звонок отклонён.")
             return
 
-        if ctx.modem_serial:
-            from src.modem import call as modem_call
-            modem_call.answer(ctx.modem_serial)
-            ctx.tts.say("Звонок принят.")
-            _wait_for_call_end(ctx)
-        elif ctx.mock_modem:
-            ctx.tts.say("Демо: звонок принят.")
-            _wait_for_call_end(ctx)
-        else:
-            ctx.tts.say("Модем не подключён.")
+        ctx.tts.say("Звонок принят.")
+        ctx.call_provider.answer()
+        _wait_for_call_end(ctx)

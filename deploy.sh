@@ -49,14 +49,36 @@ VOSK_MODEL_PATH="$MODELS_DIR/$VOSK_MODEL_NAME"
 if [ -d "$VOSK_MODEL_PATH" ]; then
     info "Модель Vosk уже есть: $VOSK_MODEL_PATH"
 else
-    info "Скачивание модели Vosk ($VOSK_MODEL_NAME, может занять время)..."
     mkdir -p "$MODELS_DIR"
     VOSK_URL="https://alphacephei.com/vosk/models/${VOSK_MODEL_NAME}.zip"
-    wget -q --show-progress -O /tmp/vosk_model.zip "$VOSK_URL" || \
-        error "Не удалось скачать модель Vosk. Скачайте вручную: $VOSK_URL"
-    unzip -q /tmp/vosk_model.zip -d "$MODELS_DIR"
-    rm /tmp/vosk_model.zip
-    info "Модель Vosk установлена: $VOSK_MODEL_PATH"
+    VOSK_ZIP="/tmp/vosk_model.zip"
+
+    # Проверяем: может zip уже залит вручную в models/
+    if [ -f "$MODELS_DIR/${VOSK_MODEL_NAME}.zip" ]; then
+        info "Найден zip в models/, распаковываю..."
+        VOSK_ZIP="$MODELS_DIR/${VOSK_MODEL_NAME}.zip"
+    else
+        info "Скачивание модели Vosk ($VOSK_MODEL_NAME)..."
+        wget --timeout=30 -q --show-progress -O "$VOSK_ZIP" "$VOSK_URL" 2>/dev/null
+        if [ $? -ne 0 ] || [ ! -f "$VOSK_ZIP" ]; then
+            warn "Не удалось скачать модель Vosk автоматически."
+            echo ""
+            echo "Скачайте вручную и положите в models/:"
+            echo "  1. Скачайте: $VOSK_URL"
+            echo "  2. Скопируйте zip на устройство: scp ${VOSK_MODEL_NAME}.zip user@device:$(pwd)/models/"
+            echo "  3. Запустите deploy.sh ещё раз — он распакует автоматически."
+            echo ""
+            # Не прерываем — остальное можно поставить
+            VOSK_ZIP=""
+        fi
+    fi
+
+    if [ -n "$VOSK_ZIP" ] && [ -f "$VOSK_ZIP" ]; then
+        unzip -q "$VOSK_ZIP" -d "$MODELS_DIR"
+        # Удаляем zip только если он был во /tmp
+        [ "$VOSK_ZIP" = "/tmp/vosk_model.zip" ] && rm -f "$VOSK_ZIP"
+        info "Модель Vosk установлена: $VOSK_MODEL_PATH"
+    fi
 fi
 
 # ── Piper TTS и модель ───────────────────────────────────────────────────────
@@ -77,6 +99,18 @@ else
     wget -q --show-progress -O "$PIPER_MODEL_ONNX"      "${BASE_URL}/ru_RU-ruslan-medium.onnx"      || warn "Не удалось скачать .onnx — скачайте вручную"
     wget -q --show-progress -O "$PIPER_MODEL_JSON"      "${BASE_URL}/ru_RU-ruslan-medium.onnx.json"  || warn "Не удалось скачать .onnx.json — скачайте вручную"
     info "Модель Piper установлена."
+fi
+
+# ── Navec модель (эмбеддинги для нечёткого поиска) ───────────────────────────
+NAVEC_MODEL="$MODELS_DIR/navec_hudlit_v1_12B_500K_300d_100q.tar"
+if [ -f "$NAVEC_MODEL" ]; then
+    info "Модель Navec уже есть."
+else
+    info "Скачивание модели Navec (50 MB)..."
+    mkdir -p "$MODELS_DIR"
+    wget -q --show-progress -O "$NAVEC_MODEL" \
+        "https://storage.yandexcloud.net/natasha-navec/packs/navec_hudlit_v1_12B_500K_300d_100q.tar" \
+        || warn "Не удалось скачать Navec — нечёткий поиск будет только по Левенштейну"
 fi
 
 # ── Конфигурация (.env) ──────────────────────────────────────────────────────

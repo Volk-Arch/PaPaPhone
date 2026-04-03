@@ -1,6 +1,6 @@
 # Copyright (c) 2024 Igor Kriusov <kriusovia@gmail.com>
-# SPDX-License-Identifier: LicenseRef-PolyForm-Noncommercial-1.0.0
-# https://polyformproject.org/licenses/noncommercial/1.0.0/
+# SPDX-License-Identifier: GPL-3.0-or-later
+# https://www.gnu.org/licenses/gpl-3.0.html
 """
 Конфигурация PaPaPhone.
 Параметры загружаются из data/.env (если есть), потом из переменных окружения.
@@ -38,6 +38,15 @@ MODEM_PORT = os.environ.get("PAPAPHONE_MODEM_PORT", "/dev/ttyUSB0")
 MODEM_BAUDRATE = 115200
 MODEM_TIMEOUT_READ_S = 2.0
 MODEM_TIMEOUT_WRITE_S = 1.0
+
+# Режим звонков: "voip" (SIP через Zadarma/Sipnet) или "modem" (AT через SIM7600)
+CALL_MODE = os.environ.get("PAPAPHONE_CALL_MODE", "voip")
+
+# SIP-настройки (для CALL_MODE=voip)
+SIP_SERVER = os.environ.get("PAPAPHONE_SIP_SERVER", "")
+SIP_USER = os.environ.get("PAPAPHONE_SIP_USER", "")
+SIP_PASSWORD = os.environ.get("PAPAPHONE_SIP_PASSWORD", "")
+SIP_PORT = int(os.environ.get("PAPAPHONE_SIP_PORT", "5060"))
 
 # База контактов и словарь команд
 DATA_DIR = PROJECT_ROOT / "data"

@@ -1,18 +1,16 @@
 # Copyright (c) 2024 Igor Kriusov <kriusovia@gmail.com>
-# SPDX-License-Identifier: LicenseRef-PolyForm-Noncommercial-1.0.0
-# https://polyformproject.org/licenses/noncommercial/1.0.0/
+# SPDX-License-Identifier: GPL-3.0-or-later
+# https://www.gnu.org/licenses/gpl-3.0.html
 """
-Фоновый мониторинг входящих звонков через AT+CLCC.
+Фоновый мониторинг входящих звонков через CallProvider.
 
-Работает в daemon-потоке, опрашивает модем с заданным интервалом.
-Использует ModemSerial.lock для потокобезопасного доступа к serial.
+Работает одинаково для AT-модема и VoIP — опрашивает call_provider.get_incoming_caller().
 """
 import sys
 import threading
 from typing import Optional
 
-from src.modem.call import get_incoming_caller
-from src.modem.serial_io import ModemSerial
+from src.calls.provider import CallProvider
 
 _DEFAULT_POLL_S = 2.0
 
@@ -21,10 +19,10 @@ class IncomingCallMonitor:
 
     def __init__(
         self,
-        modem_serial: ModemSerial,
+        call_provider: CallProvider,
         poll_interval: float = _DEFAULT_POLL_S,
     ):
-        self._serial = modem_serial
+        self._provider = call_provider
         self._interval = poll_interval
         self._stop_event = threading.Event()
         self._enabled = threading.Event()
@@ -66,9 +64,8 @@ class IncomingCallMonitor:
                 break
             if not self._enabled.is_set():
                 continue
-            # send_at уже потокобезопасен (ModemSerial.lock)
             try:
-                caller = get_incoming_caller(self._serial)
+                caller = self._provider.get_incoming_caller()
                 if caller is not None:
                     with self._data_lock:
                         self._incoming_caller = caller

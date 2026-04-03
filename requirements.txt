@@ -7,3 +7,4 @@ numpy>=1.21
 pymorphy3>=1.0
 rapidfuzz>=3.0
 navec>=0.10.0
+pyVoIP>=1.6.0

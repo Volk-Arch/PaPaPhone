@@ -1,6 +1,6 @@
 # Copyright (c) 2024 Igor Kriusov <kriusovia@gmail.com>
-# SPDX-License-Identifier: LicenseRef-PolyForm-Noncommercial-1.0.0
-# https://polyformproject.org/licenses/noncommercial/1.0.0/
+# SPDX-License-Identifier: GPL-3.0-or-later
+# https://www.gnu.org/licenses/gpl-3.0.html
 """
 Базовый класс сценария и контекст выполнения.
 Сценарий — полный детерминированный диалог: TTS-подсказка → ASR-ответ → действие.
@@ -26,9 +26,10 @@ class CancelledError(Exception):
 
 @dataclass
 class ScenarioContext:
-    asr: Any           # src.voice.asr.ASR
-    tts: Any           # src.voice.tts.TTS или _TextTTS
-    modem_serial: Any  # src.modem.serial_io.ModemSerial или None
+    asr: Any              # src.voice.asr.ASR
+    tts: Any              # src.voice.tts.TTS
+    call_provider: Any    # src.calls.provider.CallProvider
+    modem_serial: Any     # src.modem.serial_io.ModemSerial или None (для SMS)
     mock_modem: bool
     listen_timeout: float = 12.0
     in_call: bool = False

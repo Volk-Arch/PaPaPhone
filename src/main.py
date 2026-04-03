@@ -1,13 +1,13 @@
 # Copyright (c) 2024 Igor Kriusov <kriusovia@gmail.com>
-# SPDX-License-Identifier: LicenseRef-PolyForm-Noncommercial-1.0.0
-# https://polyformproject.org/licenses/noncommercial/1.0.0/
+# SPDX-License-Identifier: GPL-3.0-or-later
+# https://www.gnu.org/licenses/gpl-3.0.html
 """
 Точка входа PaPaPhone: инициализация и запуск конечного автомата.
 
 Режимы:
-  python -m src.main             — продакшн (Orange Pi + SIM7600)
-  python -m src.main --demo      — отладка на Windows (без модема, Vosk + TTS с fallback)
-  python -m src.main --no-wake   — без wake-фразы (команды сразу)
+  python -m src.main             — продакшн (VoIP + SIM7600 SMS)
+  python -m src.main --demo      — отладка без модема и VoIP
+  python -m src.main --no-wake   — без wake-фразы
 """
 import argparse
 import sys
@@ -19,7 +19,12 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config import (
+    CALL_MODE,
     DATA_DIR,
+    SIP_PASSWORD,
+    SIP_PORT,
+    SIP_SERVER,
+    SIP_USER,
     VOSK_MODEL_PATH,
     WAKE_PHRASES,
 )
@@ -42,7 +47,7 @@ def main() -> int:
     parser.add_argument(
         "--demo",
         action="store_true",
-        help="Отладка без модема (Vosk + TTS с fallback на консоль)",
+        help="Отладка без модема и VoIP (Vosk + TTS с fallback)",
     )
     parser.add_argument(
         "--no-wake",
@@ -62,14 +67,14 @@ def main() -> int:
 
     is_demo = args.demo
 
-    # --- TTS (всегда реальный, с fallback на консоль если Piper недоступен) ---
+    # --- TTS ---
     tts = TTS()
     if tts.is_available():
         print("TTS: piper включён.", file=sys.stderr)
     else:
         print("TTS: piper недоступен, вывод в консоль [TTS].", file=sys.stderr)
 
-    # --- Модем (только в продакшне) ---
+    # --- Модем (для SMS + сигнал, не для звонков) ---
     modem_serial: ModemSerial | None = None
     if not is_demo:
         try:
@@ -88,10 +93,37 @@ def main() -> int:
     else:
         print("Демо-режим: модем отключён.", file=sys.stderr)
 
-    # --- ASR (Vosk — всегда реальный) ---
+    # --- Провайдер звонков ---
+    call_provider = None
+    if is_demo:
+        from src.calls.provider import DemoCallProvider
+        call_provider = DemoCallProvider()
+        print("Звонки: демо.", file=sys.stderr)
+    elif CALL_MODE == "voip":
+        if SIP_SERVER and SIP_USER:
+            try:
+                from src.calls.voip import VoipCallProvider
+                call_provider = VoipCallProvider(SIP_SERVER, SIP_USER, SIP_PASSWORD, SIP_PORT)
+                tts.say("VoIP подключён.")
+            except Exception as e:
+                print(f"VoIP: {e}", file=sys.stderr)
+                tts.say("Не удалось подключить VoIP.")
+        else:
+            print("VoIP: SIP-настройки не заданы в .env", file=sys.stderr)
+            tts.say("VoIP не настроен.")
+    elif CALL_MODE == "modem" and modem_serial:
+        from src.calls.modem import ModemCallProvider
+        call_provider = ModemCallProvider(modem_serial)
+        print("Звонки: AT-модем.", file=sys.stderr)
+
+    if call_provider is None and not is_demo:
+        from src.calls.provider import DemoCallProvider
+        call_provider = DemoCallProvider()
+        print("Звонки: fallback на демо (провайдер не подключён).", file=sys.stderr)
+
+    # --- ASR ---
     if not VOSK_MODEL_PATH.exists():
         print(f"Модель Vosk не найдена: {VOSK_MODEL_PATH}", file=sys.stderr)
-        print("Скачайте с https://alphacephei.com/vosk/models", file=sys.stderr)
         tts.say("Модель распознавания не найдена. Выход.")
         return 1
 
@@ -110,19 +142,17 @@ def main() -> int:
     ctx = ScenarioContext(
         asr=asr,
         tts=tts,
-        modem_serial=modem_serial,
+        call_provider=call_provider,
+        modem_serial=modem_serial,  # для SMS
         mock_modem=is_demo,
         listen_timeout=args.listen_timeout,
     )
 
     use_wake = not args.no_wake and bool(WAKE_PHRASES)
 
-    # --- Мониторы (только с реальным модемом) ---
-    monitor = None
-    sms_mon = None
-    if modem_serial:
-        monitor = IncomingCallMonitor(modem_serial)
-        sms_mon = SmsMonitor(modem_serial)
+    # --- Мониторы ---
+    monitor = IncomingCallMonitor(call_provider) if not is_demo else None
+    sms_mon = SmsMonitor(modem_serial) if modem_serial else None
 
     # --- Конечный автомат ---
     fsm = PhoneFSM(
@@ -133,13 +163,12 @@ def main() -> int:
         wake_phrases=WAKE_PHRASES,
     )
 
-    # --- Демо: фоновый поток для симуляции удалённого сброса по Enter ---
+    # --- Демо: Enter = собеседник повесил трубку ---
     if is_demo:
         def _demo_keyboard_listener():
-            """Enter = собеседник повесил трубку (только во время демо-звонка)."""
             while True:
                 try:
-                    line = input()  # блокирует до Enter
+                    line = input()
                 except EOFError:
                     break
                 if ctx.in_call:
@@ -151,17 +180,19 @@ def main() -> int:
         )
         kb_thread.start()
 
-    mode = "демо" if is_demo else "продакшн"
+    mode = "демо" if is_demo else f"продакшн ({CALL_MODE})"
     wake_info = f"wake «{WAKE_PHRASES[0]}»" if use_wake else "без wake"
     print(f"FSM: {mode}, {wake_info}.", file=sys.stderr)
     if is_demo:
-        print("Подсказка: нажмите Enter во время звонка для симуляции сброса.", file=sys.stderr)
+        print("Enter во время звонка = сброс собеседником.", file=sys.stderr)
 
     try:
         fsm.run()
     finally:
         asr.shutdown()
         tts.shutdown()
+        if call_provider:
+            call_provider.shutdown()
         if modem_serial is not None:
             modem_serial.close()
 
