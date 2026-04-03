@@ -63,18 +63,11 @@ def init_db(schema_path: Optional[Path] = None) -> None:
             conn.execute("SELECT is_emergency FROM contacts LIMIT 1")
         except sqlite3.OperationalError:
             conn.execute("ALTER TABLE contacts ADD COLUMN is_emergency INTEGER DEFAULT 0")
-        # Миграция: is_sos
+        # Миграция: is_sos (deprecated, оставляем для совместимости)
         try:
             conn.execute("SELECT is_sos FROM contacts LIMIT 1")
         except sqlite3.OperationalError:
             conn.execute("ALTER TABLE contacts ADD COLUMN is_sos INTEGER DEFAULT 0")
-        # Контакт "Скорая" при первом запуске
-        row = conn.execute("SELECT id FROM contacts WHERE is_sos = 1").fetchone()
-        if not row:
-            conn.execute(
-                "INSERT INTO contacts (name, phone, aliases, is_sos) VALUES (?, ?, ?, 1)",
-                ("Скорая", "112", '["экстренная","спасение"]'),
-            )
         conn.commit()
     finally:
         conn.close()
@@ -261,28 +254,6 @@ def get_emergency_contacts() -> List[Tuple[int, str, str]]:
         conn.close()
 
 
-def get_sos_number() -> str:
-    """Номер экстренного вызова (is_sos=1). По умолчанию 112."""
-    init_db()
-    conn = _get_connection()
-    try:
-        row = conn.execute(
-            "SELECT phone FROM contacts WHERE is_sos = 1 LIMIT 1"
-        ).fetchone()
-        return row["phone"] if row else "112"
-    finally:
-        conn.close()
-
-
-def set_sos_number(phone: str) -> None:
-    """Обновить номер экстренного вызова."""
-    init_db()
-    conn = _get_connection()
-    try:
-        conn.execute("UPDATE contacts SET phone = ? WHERE is_sos = 1", (phone,))
-        conn.commit()
-    finally:
-        conn.close()
 
 
 # ---------------------------------------------------------------------------

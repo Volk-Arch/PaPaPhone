@@ -116,14 +116,14 @@ class EmergencyScenario(BaseScenario):
     - При звонке шлёт SMS всем экстренным контактам из БД
     """
 
-    def _notify_emergency_contacts(self, ctx: ScenarioContext, sos_number: str) -> None:
+    def _send_emergency_sms(self, ctx: ScenarioContext) -> None:
         """Отправить SMS экстренным контактам."""
         from src.config import HOME_ADDRESS
         emergency = contacts_db.get_emergency_contacts()
         if not emergency or not ctx.modem_serial:
             return
         from src.modem import sms as modem_sms
-        text = f"Экстренный вызов! Вызвана помощь по номеру {sos_number}. Адрес: {HOME_ADDRESS}"
+        text = f"Экстренный вызов! Нужна помощь. Адрес: {HOME_ADDRESS}"
         for _id, name, phone in emergency:
             try:
                 modem_sms.send_sms(ctx.modem_serial, phone, text)
@@ -132,10 +132,13 @@ class EmergencyScenario(BaseScenario):
                 print(f"[EMERGENCY] SMS не отправлено {name}: {e}", file=sys.stderr)
 
     def run(self, ctx: ScenarioContext) -> None:
-        sos_number = contacts_db.get_sos_number()
-        spoken = " ".join(sos_number)
+        emergency = contacts_db.get_emergency_contacts()
+        if not emergency:
+            ctx.tts.say("Нет экстренных контактов. Добавьте через секретное меню.")
+            return
 
-        ctx.tts.say(f"Экстренный вызов {spoken}. Для отмены скажите нет.")
+        names = ", ".join(name for _, name, _ in emergency)
+        ctx.tts.say(f"Экстренный вызов. Звоню: {names}. Для отмены скажите нет.")
 
         answer = self._listen(ctx, _EMERGENCY_CONFIRM_S)
 
@@ -143,14 +146,21 @@ class EmergencyScenario(BaseScenario):
             ctx.tts.say("Экстренный вызов отменён.")
             return
 
-        self._notify_emergency_contacts(ctx, sos_number)
+        # SMS всем экстренным
+        self._send_emergency_sms(ctx)
 
-        ctx.tts.say(f"Звоню {spoken}.")
+        # Обзваниваем по очереди — пока кто-то не ответит
+        for _id, name, phone in emergency:
+            ctx.tts.say(f"Звоню {name}.")
+            contacts_db.log_call(phone, "out")
 
-        if ctx.call_provider.dial(sos_number):
-            _wait_for_call_end(ctx)
-        else:
-            ctx.tts.say("Не удалось позвонить.")
+            if ctx.call_provider.dial(phone):
+                _wait_for_call_end(ctx)
+                return  # дозвонились — выходим
+
+            ctx.tts.say(f"{name} не отвечает.")
+
+        ctx.tts.say("Никто не ответил.")
 
 
 class CallContactScenario(BaseScenario):
